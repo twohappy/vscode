@@ -40,30 +40,30 @@ export class CommentNode extends Disposable {
 	private _md: HTMLElement;
 	private _clearTimeout: any;
 
-	private _editAction: Action;
-	private _commentEditContainer: HTMLElement;
+	private _editAction: Action | null = null;
+	private _commentEditContainer: HTMLElement | null = null;
 	private _commentDetailsContainer: HTMLElement;
-	private _actionsToolbarContainer: HTMLElement;
+	private _actionsToolbarContainer!: HTMLElement;
 	private _reactionsActionBar?: ActionBar;
 	private _reactionActionsContainer?: HTMLElement;
-	private _commentEditor: SimpleCommentEditor | null;
+	private _commentEditor: SimpleCommentEditor | null = null;
 	private _commentEditorDisposables: IDisposable[] = [];
-	private _commentEditorModel: ITextModel;
-	private _isPendingLabel: HTMLElement;
+	private _commentEditorModel: ITextModel | null = null;
+	private _isPendingLabel!: HTMLElement;
 	private _contextKeyService: IContextKeyService;
 	private _commentContextValue: IContextKey<string>;
 
 	protected actionRunner?: IActionRunner;
 	protected toolbar: ToolBar | undefined;
-	private _commentFormActions: CommentFormActions;
+	private _commentFormActions: CommentFormActions | null = null;
 
-	private _onDidDelete = new Emitter<CommentNode>();
+	private readonly _onDidClick = new Emitter<CommentNode>();
 
 	public get domNode(): HTMLElement {
 		return this._domNode;
 	}
 
-	public isEditing: boolean;
+	public isEditing: boolean = false;
 
 	constructor(
 		private commentThread: modes.CommentThread,
@@ -89,7 +89,7 @@ export class CommentNode extends Disposable {
 		this._contextKeyService = contextKeyService.createScoped(this._domNode);
 		this._commentContextValue = this._contextKeyService.createKey('comment', comment.contextValue);
 
-		this._domNode.tabIndex = 0;
+		this._domNode.tabIndex = -1;
 		const avatar = dom.append(this._domNode, dom.$('div.avatar-container'));
 		if (comment.userIconPath) {
 			const img = <HTMLImageElement>dom.append(avatar, dom.$('img.avatar'));
@@ -111,10 +111,12 @@ export class CommentNode extends Disposable {
 		this._domNode.setAttribute('aria-label', `${comment.userName}, ${comment.body.value}`);
 		this._domNode.setAttribute('role', 'treeitem');
 		this._clearTimeout = null;
+
+		this._register(dom.addDisposableListener(this._domNode, dom.EventType.CLICK, () => this.isEditing || this._onDidClick.fire(this)));
 	}
 
-	public get onDidDelete(): Event<CommentNode> {
-		return this._onDidDelete.event;
+	public get onDidClick(): Event<CommentNode> {
+		return this._onDidClick.event;
 	}
 
 	private createHeader(commentDetailsContainer: HTMLElement): void {
@@ -326,8 +328,8 @@ export class CommentNode extends Disposable {
 		}
 	}
 
-	private createCommentEditor(): void {
-		const container = dom.append(this._commentEditContainer, dom.$('.edit-textarea'));
+	private createCommentEditor(editContainer: HTMLElement): void {
+		const container = dom.append(editContainer, dom.$('.edit-textarea'));
 		this._commentEditor = this.instantiationService.createInstance(SimpleCommentEditor, container, SimpleCommentEditor.getEditorOptions(), this.parentEditor, this.parentThread);
 		const resource = URI.parse(`comment:commentinput-${this.comment.uniqueIdInThread}-${Date.now()}.md`);
 		this._commentEditorModel = this.modelService.createModel('', this.modeService.createByFilepathOrFirstLine(resource), resource, false);
@@ -390,7 +392,7 @@ export class CommentNode extends Disposable {
 			this._commentEditor = null;
 		}
 
-		this._commentEditContainer.remove();
+		this._commentEditContainer!.remove();
 	}
 
 	public switchToEditMode() {
@@ -401,7 +403,7 @@ export class CommentNode extends Disposable {
 		this.isEditing = true;
 		this._body.classList.add('hidden');
 		this._commentEditContainer = dom.append(this._commentDetailsContainer, dom.$('.edit-container'));
-		this.createCommentEditor();
+		this.createCommentEditor(this._commentEditContainer);
 		const formActions = dom.append(this._commentEditContainer, dom.$('.form-actions'));
 
 		const menus = this.commentService.getCommentMenus(this.owner);
@@ -409,7 +411,9 @@ export class CommentNode extends Disposable {
 
 		this._register(menu);
 		this._register(menu.onDidChange(() => {
-			this._commentFormActions.setActions(menu);
+			if (this._commentFormActions) {
+				this._commentFormActions.setActions(menu);
+			}
 		}));
 
 		this._commentFormActions = new CommentFormActions(formActions, (action: IAction): void => {
@@ -428,19 +432,31 @@ export class CommentNode extends Disposable {
 		this._commentFormActions.setActions(menu);
 	}
 
+	setFocus(focused: boolean, visible: boolean = false) {
+		if (focused) {
+			this._domNode.focus();
+			this._actionsToolbarContainer.classList.remove('hidden');
+			this._actionsToolbarContainer.classList.add('tabfocused');
+			this._domNode.tabIndex = 0;
+		} else {
+			if (this._actionsToolbarContainer.classList.contains('tabfocused') && !this._actionsToolbarContainer.classList.contains('mouseover')) {
+				this._actionsToolbarContainer.classList.add('hidden');
+				this._domNode.tabIndex = -1;
+			}
+			this._actionsToolbarContainer.classList.remove('tabfocused');
+		}
+	}
+
 	private registerActionBarListeners(actionsContainer: HTMLElement): void {
 		this._register(dom.addDisposableListener(this._domNode, 'mouseenter', () => {
 			actionsContainer.classList.remove('hidden');
+			actionsContainer.classList.add('mouseover');
 		}));
-
-		this._register(dom.addDisposableListener(this._domNode, 'focus', () => {
-			actionsContainer.classList.remove('hidden');
-		}));
-
 		this._register(dom.addDisposableListener(this._domNode, 'mouseleave', () => {
-			if (!this._domNode.contains(document.activeElement)) {
+			if (actionsContainer.classList.contains('mouseover') && !actionsContainer.classList.contains('tabfocused')) {
 				actionsContainer.classList.add('hidden');
 			}
+			actionsContainer.classList.remove('mouseover');
 		}));
 	}
 
